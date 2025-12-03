@@ -4,6 +4,30 @@ import socket
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Country flag mapping for common proxy locations
+COUNTRY_FLAGS = {
+    'US': '🇺🇸', 'GB': '🇬🇧', 'CA': '🇨🇦', 'DE': '🇩🇪', 'FR': '🇫🇷',
+    'NL': '🇳🇱', 'SG': '🇸🇬', 'JP': '🇯🇵', 'IN': '🇮🇳', 'AU': '🇦🇺',
+    'BR': '🇧🇷', 'RU': '🇷🇺', 'CN': '🇨🇳', 'KR': '🇰🇷', 'IT': '🇮🇹',
+    'ES': '🇪🇸', 'SE': '🇸🇪', 'NO': '🇳🇴', 'FI': '🇫🇮', 'DK': '🇩🇰',
+    'PL': '🇵🇱', 'TR': '🇹🇷', 'MX': '🇲🇽', 'AR': '🇦🇷', 'CL': '🇨🇱',
+    'ZA': '🇿🇦', 'EG': '🇪🇬', 'IL': '🇮🇱', 'AE': '🇦🇪', 'SA': '🇸🇦',
+    'TH': '🇹🇭', 'VN': '🇻🇳', 'ID': '🇮🇩', 'MY': '🇲🇾', 'PH': '🇵🇭',
+    'HK': '🇭🇰', 'TW': '🇹🇼', 'UA': '🇺🇦', 'CZ': '🇨🇿', 'AT': '🇦🇹'
+}
+
+
+def get_country_from_ip(ip):
+    """Get country code from IP using ip-api.com"""
+    try:
+        response = requests.get(f"http://ip-api.com/json/{ip}?fields=countryCode", timeout=2)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('countryCode', 'UN')
+        return 'UN'
+    except:
+        return 'UN'
+
 
 def fetch_proxies():
     """Fetch proxies from the CDN source"""
@@ -14,7 +38,7 @@ def fetch_proxies():
         proxies = [line.strip() for line in response.text.split('\n') if line.strip()]
         return proxies
     except Exception as e:
-        return [f"Error fetching proxies: {str(e)}"]
+        return []
 
 
 def create_telegram_link(proxy):
@@ -28,11 +52,11 @@ def create_telegram_link(proxy):
         return None
 
 
-def test_proxy_ping(proxy, timeout=3):
+def test_proxy_ping(proxy, timeout=5):
     """Test if proxy is responding"""
     try:
         if ':' not in proxy:
-            return False, "Invalid format", 99999
+            return False, "Invalid", 99999, 'UN'
 
         server, port = proxy.split(':')
         start_time = time.time()
@@ -45,124 +69,103 @@ def test_proxy_ping(proxy, timeout=3):
         ping_time = (time.time() - start_time) * 1000
 
         if result == 0:
-            return True, f"{ping_time:.0f}ms", ping_time
+            country = get_country_from_ip(server)
+            return True, f"{ping_time:.0f}ms", ping_time, country
         else:
-            return False, "Unreachable", 99999
+            return False, "Unreachable", 99999, 'UN'
     except Exception as e:
-        return False, str(e)[:20], 99999
+        return False, "Failed", 99999, 'UN'
 
 
-def test_proxy_for_sorting(proxy):
-    """Test a single proxy and return results for sorting"""
-    is_working, result_text, ping_ms = test_proxy_ping(proxy, timeout=5)
+def test_proxy_full(proxy):
+    """Test a single proxy and return full results"""
+    is_working, result_text, ping_ms, country = test_proxy_ping(proxy, timeout=5)
     return {
         'proxy': proxy,
         'is_working': is_working,
         'ping_ms': ping_ms,
-        'ping_text': result_text
+        'ping_text': result_text,
+        'country': country
     }
 
 
-def format_proxy_html(proxies, show_ping=False, proxy_results=None):
-    """Format proxies as beautiful HTML cards"""
-    html = """
-    <div class="proxy-container">
-    """
-
-    for idx, proxy in enumerate(proxies[:50], 1):
-        tg_link = create_telegram_link(proxy)
-        if tg_link:
-            ping_display = ""
-            if show_ping and proxy_results:
-                result = next((r for r in proxy_results if r['proxy'] == proxy), None)
-                if result:
-                    status_class = "working" if result['is_working'] else "failed"
-                    ping_display = f'<div class="ping-status {status_class}">{result["ping_text"]}</div>'
-            
-            html += f"""
-            <div class="proxy-card" data-proxy="{proxy}">
-                <div class="proxy-header">
-                    <span class="proxy-number">#{idx}</span>
-                    <span class="proxy-address">{proxy}</span>
-                </div>
-                {ping_display}
-                <div class="proxy-actions">
-                    <a href="{tg_link}" target="_blank" class="tg-link">
-                        <span class="tg-icon">✈️</span> Add to Telegram
-                    </a>
-                    <button class="test-btn" onclick="testProxy('{proxy}', {idx})">
-                        <span id="status-{idx}">🔍 Test</span>
-                    </button>
-                </div>
-            </div>
-            """
-
-    html += """
-    </div>
-    """
-    return html
-
-
-def refresh_proxies():
-    """Refresh and display proxies"""
+def auto_load_proxies():
+    """Auto-load proxies on startup"""
     proxies = fetch_proxies()
-    if proxies and not proxies[0].startswith("Error"):
-        count = len(proxies)
-        html = format_proxy_html(proxies)
-        return html, f"✅ Loaded {count} proxies"
-    else:
-        return "<div class='error'>Failed to load proxies</div>", "❌ Error loading proxies"
+    if proxies:
+        return f"✅ Loaded {len(proxies)} proxies ready to test"
+    return "❌ Failed to load proxies"
 
 
-def sort_proxies_by_ping(progress=gr.Progress()):
-    """Sort proxies by ping speed"""
+def test_all_proxies(progress=gr.Progress()):
+    """Test all proxies and display working ones in a list"""
     progress(0, desc="Fetching proxies...")
     proxies = fetch_proxies()
     
-    if not proxies or proxies[0].startswith("Error"):
-        return "<div class='error'>Failed to load proxies</div>", "❌ Error loading proxies"
+    if not proxies:
+        return "<div class='error'>Failed to load proxies</div>", "❌ Error"
     
-    # Limit to 30 proxies for faster testing
-    test_proxies = proxies[:30]
-    progress(0.2, desc=f"Testing {len(test_proxies)} proxies...")
+    progress(0.1, desc=f"Testing {len(proxies)} proxies...")
     
     results = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(test_proxy_for_sorting, proxy): proxy for proxy in test_proxies}
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        futures = {executor.submit(test_proxy_full, proxy): proxy for proxy in proxies}
         
         completed = 0
         for future in as_completed(futures):
             result = future.result()
-            results.append(result)
+            if result['is_working']:  # Only keep working proxies
+                results.append(result)
             completed += 1
-            progress(0.2 + (0.7 * completed / len(test_proxies)), 
-                    desc=f"Tested {completed}/{len(test_proxies)} proxies")
+            progress(0.1 + (0.8 * completed / len(proxies)), 
+                    desc=f"Tested {completed}/{len(proxies)} | Found {len(results)} working")
     
-    # Sort by ping (working proxies first, then by ping time)
-    results.sort(key=lambda x: (not x['is_working'], x['ping_ms']))
+    # Sort by ping (lowest first)
+    results.sort(key=lambda x: x['ping_ms'])
     
-    progress(0.95, desc="Generating display...")
-    sorted_proxies = [r['proxy'] for r in results]
-    html = format_proxy_html(sorted_proxies, show_ping=True, proxy_results=results)
+    progress(0.95, desc="Generating list...")
     
-    working_count = sum(1 for r in results if r['is_working'])
-    status_msg = f"✅ Sorted {len(results)} proxies | {working_count} working | {len(results) - working_count} failed"
+    # Generate list HTML
+    html = "<div class='proxy-list-container'>"
     
-    progress(1.0, desc="Done!")
-    return html, status_msg
-
-
-def test_single_proxy(proxy_address):
-    """Test a single proxy and return result"""
-    is_working, result, _ = test_proxy_ping(proxy_address)
-    if is_working:
-        return f"✅ {result}"
+    if not results:
+        html += "<div class='error'>No working proxies found. Try again later.</div>"
     else:
-        return f"❌ {result}"
+        html += "<div class='proxy-list-header'>"
+        html += "<div class='header-item'>#</div>"
+        html += "<div class='header-item'>Country</div>"
+        html += "<div class='header-item'>Proxy Address</div>"
+        html += "<div class='header-item'>Ping</div>"
+        html += "<div class='header-item'>Action</div>"
+        html += "</div>"
+        
+        for idx, r in enumerate(results, 1):
+            tg_link = create_telegram_link(r['proxy'])
+            flag = COUNTRY_FLAGS.get(r['country'], '🌍')
+            
+            html += f"""
+            <div class='proxy-list-row'>
+                <div class='list-cell rank'>{idx}</div>
+                <div class='list-cell country'><span class='flag'>{flag}</span> {r['country']}</div>
+                <div class='list-cell address'>{r['proxy']}</div>
+                <div class='list-cell ping'><span class='ping-badge'>{r['ping_text']}</span></div>
+                <div class='list-cell action'>
+                    <a href="{tg_link}" target="_blank" class="add-btn">✈️ Add to Telegram</a>
+                </div>
+            </div>
+            """
+    
+    html += "</div>"
+    
+    working_count = len(results)
+    status = f"✅ Found {working_count} working proxies out of {len(proxies)} tested"
+    
+    progress(1.0, desc="Complete!")
+    return html, status
 
 
 custom_css = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 * {
     font-family: 'Inter', sans-serif;
@@ -173,140 +176,129 @@ custom_css = """
     min-height: 100vh;
 }
 
-.proxy-container {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-    gap: 20px;
-    padding: 20px;
-    max-width: 1400px;
-    margin: 0 auto;
-}
-
-.proxy-card {
+.proxy-list-container {
+    max-width: 1200px;
+    margin: 20px auto;
     background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(15px);
     border-radius: 20px;
     border: 1px solid rgba(255, 255, 255, 0.2);
     padding: 20px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    animation: fadeIn 0.5s ease-in;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
 }
 
-@keyframes fadeIn {
+.proxy-list-header {
+    display: grid;
+    grid-template-columns: 60px 120px 1fr 120px 200px;
+    gap: 15px;
+    padding: 15px 20px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    margin-bottom: 10px;
+    font-weight: 700;
+    color: white;
+    text-transform: uppercase;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+}
+
+.proxy-list-row {
+    display: grid;
+    grid-template-columns: 60px 120px 1fr 120px 200px;
+    gap: 15px;
+    padding: 18px 20px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    margin-bottom: 8px;
+    transition: all 0.3s ease;
+    align-items: center;
+    animation: slideIn 0.4s ease;
+}
+
+@keyframes slideIn {
     from {
         opacity: 0;
-        transform: translateY(20px);
+        transform: translateX(-20px);
     }
     to {
         opacity: 1;
-        transform: translateY(0);
+        transform: translateX(0);
     }
 }
 
-.proxy-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.2);
+.proxy-list-row:hover {
     background: rgba(255, 255, 255, 0.15);
+    transform: translateX(5px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
 }
 
-.proxy-header {
+.list-cell {
+    color: white;
+    font-size: 14px;
+}
+
+.list-cell.rank {
+    font-weight: 700;
+    font-size: 16px;
+    color: #a5b4fc;
+}
+
+.list-cell.country {
     display: flex;
     align-items: center;
-    margin-bottom: 15px;
-    gap: 10px;
-}
-
-.proxy-number {
-    background: linear-gradient(135deg, #667eea, #764ba2);
-    color: white;
-    padding: 5px 12px;
-    border-radius: 10px;
-    font-weight: 700;
-    font-size: 14px;
-}
-
-.proxy-address {
-    color: white;
+    gap: 8px;
     font-weight: 600;
-    font-size: 16px;
-    word-break: break-all;
 }
 
-.ping-status {
-    padding: 8px 12px;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 600;
-    margin-bottom: 10px;
-    text-align: center;
+.flag {
+    font-size: 20px;
 }
 
-.ping-status.working {
-    background: rgba(34, 197, 94, 0.2);
+.list-cell.address {
+    font-weight: 500;
+    font-family: 'Courier New', monospace;
+    color: #e0e7ff;
+}
+
+.ping-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    background: rgba(34, 197, 94, 0.3);
     color: #22c55e;
-    border: 1px solid rgba(34, 197, 94, 0.4);
+    border-radius: 8px;
+    font-weight: 600;
+    border: 1px solid rgba(34, 197, 94, 0.5);
 }
 
-.ping-status.failed {
-    background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
-    border: 1px solid rgba(239, 68, 68, 0.4);
-}
-
-.proxy-actions {
-    display: flex;
-    gap: 10px;
-    flex-direction: column;
-}
-
-.tg-link {
-    display: flex;
+.add-btn {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
+    padding: 10px 18px;
     background: linear-gradient(135deg, #0088cc, #0066aa);
     color: white;
-    padding: 12px 20px;
-    border-radius: 12px;
     text-decoration: none;
+    border-radius: 10px;
     font-weight: 600;
+    font-size: 13px;
     transition: all 0.3s;
-    box-shadow: 0 4px 15px rgba(0, 136, 204, 0.3);
+    box-shadow: 0 4px 12px rgba(0, 136, 204, 0.3);
 }
 
-.tg-link:hover {
+.add-btn:hover {
     transform: scale(1.05);
-    box-shadow: 0 6px 20px rgba(0, 136, 204, 0.5);
-}
-
-.tg-icon {
-    font-size: 18px;
-}
-
-.test-btn {
-    background: rgba(255, 255, 255, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    color: white;
-    padding: 12px 20px;
-    border-radius: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.3s;
-}
-
-.test-btn:hover {
-    background: rgba(255, 255, 255, 0.3);
-    transform: scale(1.02);
+    box-shadow: 0 6px 18px rgba(0, 136, 204, 0.5);
 }
 
 .error {
     color: #ff6b6b;
-    background: rgba(255, 107, 107, 0.1);
-    padding: 20px;
+    background: rgba(255, 107, 107, 0.15);
+    padding: 30px;
     border-radius: 15px;
     text-align: center;
     font-weight: 600;
+    font-size: 16px;
 }
 
 h1 {
@@ -314,15 +306,16 @@ h1 {
     text-align: center;
     font-size: 3em !important;
     font-weight: 700 !important;
-    text-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    text-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
     margin-bottom: 10px !important;
 }
 
 .subtitle {
-    color: rgba(255, 255, 255, 0.9);
+    color: rgba(255, 255, 255, 0.95);
     text-align: center;
     font-size: 1.2em;
     margin-bottom: 30px;
+    font-weight: 500;
 }
 
 button.primary {
@@ -341,61 +334,48 @@ button.primary:hover {
     transform: translateY(-2px) !important;
     box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6) !important;
 }
+
+@media (max-width: 768px) {
+    .proxy-list-header,
+    .proxy-list-row {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    
+    .header-item {
+        display: none;
+    }
+    
+    .list-cell::before {
+        content: attr(data-label);
+        font-weight: 700;
+        margin-right: 10px;
+    }
+}
 """
 
 
 with gr.Blocks(css=custom_css, title="TeleProxyHub - SOCKS5 Proxy Manager") as demo:
     gr.Markdown("# 🚀 TeleProxyHub")
-    gr.Markdown("<p class='subtitle'>Free SOCKS5 Proxies for Telegram - Updated in Real-time</p>")
-
-    with gr.Tabs():
-        with gr.Tab("📝 All Proxies"):
-            with gr.Row():
-                refresh_btn = gr.Button("🔄 Refresh Proxies", elem_classes="primary")
-                status_text = gr.Textbox(label="Status", interactive=False, value="Click refresh to load proxies")
-            
-            proxy_display = gr.HTML()
-            
-            refresh_btn.click(
-                fn=refresh_proxies,
-                outputs=[proxy_display, status_text]
-            )
-            
-            demo.load(
-                fn=refresh_proxies,
-                outputs=[proxy_display, status_text]
-            )
-        
-        with gr.Tab("⚡ Sorted by Ping"):
-            gr.Markdown("### 🎯 Proxies sorted from lowest to highest ping (Top 30)")
-            gr.Markdown("_This will test each proxy and sort them by response time. Working proxies appear first._")
-            
-            with gr.Row():
-                sort_btn = gr.Button("⚡ Test & Sort Proxies", elem_classes="primary")
-                sorted_status = gr.Textbox(label="Status", interactive=False, value="Click to start testing")
-            
-            sorted_display = gr.HTML()
-            
-            sort_btn.click(
-                fn=sort_proxies_by_ping,
-                outputs=[sorted_display, sorted_status]
-            )
-        
-        with gr.Tab("🔍 Test Proxy"):
-            gr.Markdown("## 🔍 Test Individual Proxy")
-            with gr.Row():
-                test_input = gr.Textbox(
-                    label="Enter proxy (format: IP:PORT)",
-                    placeholder="Example: 14.102.10.152:8443"
-                )
-                test_btn = gr.Button("Test Proxy", elem_classes="primary")
-            test_result = gr.Textbox(label="Test Result", interactive=False)
-            
-            test_btn.click(
-                fn=test_single_proxy,
-                inputs=[test_input],
-                outputs=[test_result]
-            )
+    gr.Markdown("<p class='subtitle'>Free SOCKS5 Proxies for Telegram - Auto-tested & Sorted by Speed</p>")
+    
+    status_text = gr.Textbox(label="Status", interactive=False, value="Loading proxies...")
+    
+    test_btn = gr.Button("⚡ Test All Proxies & Show Working List", elem_classes="primary", size="lg")
+    
+    proxy_list = gr.HTML()
+    
+    # Auto-load on startup
+    demo.load(
+        fn=auto_load_proxies,
+        outputs=[status_text]
+    )
+    
+    # Test all on button click
+    test_btn.click(
+        fn=test_all_proxies,
+        outputs=[proxy_list, status_text]
+    )
 
 
 if __name__ == "__main__":
