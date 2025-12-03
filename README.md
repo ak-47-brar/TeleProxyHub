@@ -1,3 +1,14 @@
+---
+title: TeleProxyHub
+emoji: 🚀
+colorFrom: purple
+colorTo: blue
+sdk: gradio
+sdk_version: 4.44.0
+app_file: app.py
+pinned: false
+---
+
 # 🚀 TeleProxyHub
 
 A beautiful web application to fetch and manage free SOCKS5 proxies for Telegram with real-time testing capabilities.
