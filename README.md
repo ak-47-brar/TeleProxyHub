@@ -50,13 +50,100 @@ TeleProxyHub was a web application that:
 - **Libraries:** `requests`, `socket`, `concurrent.futures`
 - **Deployment:** ~~Hugging Face Spaces~~ (discontinued)
 
+## Configuration
+
+### 🔧 Customizing the App
+
+All configurable settings are at the top of `app.py`:
+
+```python
+# Proxy data sources - add your own or modify existing
+PROXY_SOURCES = [
+    "https://example.com/your-proxy-source-1.txt",
+    "https://example.com/your-proxy-source-2.txt",
+    # Add more sources here
+]
+
+# Performance settings
+MAX_TEST_PROXIES = 80    # How many proxies to test at once
+CONNECT_TIMEOUT = 4      # Seconds to wait for connection
+MAX_WORKERS = 40         # Parallel testing threads
+```
+
+### 🌐 Adding Your Own Proxy Sources
+
+1. Find free proxy list APIs or GitHub repositories with proxy lists
+2. Add URLs to the `PROXY_SOURCES` list in `app.py`
+3. Supported formats:
+   - Plain text files with `IP:PORT` per line
+   - APIs returning proxy lists
+   - GitHub raw file URLs
+
+**Example sources you can use:**
+```python
+PROXY_SOURCES = [
+    "https://raw.githubusercontent.com/[USERNAME]/[REPO]/main/proxies.txt",
+    "https://api.yourservice.com/proxies?type=socks5",
+    "https://cdn.jsdelivr.net/gh/[USERNAME]/[REPO]@main/list.txt",
+]
+```
+
+### ⚙️ Performance Tuning
+
+**For slower systems:**
+```python
+MAX_TEST_PROXIES = 30   # Test fewer proxies
+MAX_WORKERS = 15        # Use fewer threads
+CONNECT_TIMEOUT = 3     # Shorter timeout
+```
+
+**For faster systems/servers:**
+```python
+MAX_TEST_PROXIES = 150  # Test more proxies
+MAX_WORKERS = 60        # Use more threads
+CONNECT_TIMEOUT = 5     # Longer timeout for distant servers
+```
+
+### 🌍 Changing Geolocation Service
+
+The app uses `ipwho.is` for country detection. To use a different service:
+
+1. Find the `get_country()` function in `app.py`
+2. Replace the API URL and response parsing:
+
+```python
+def get_country(ip: str):
+    if ip in COUNTRY_CACHE:
+        return COUNTRY_CACHE[ip]
+    
+    try:
+        # Replace with your preferred geolocation API
+        url = f"https://your-geo-api.com/{ip}"
+        resp = requests.get(url, timeout=3)
+        data = resp.json()
+        
+        # Parse according to your API's response format
+        code = data.get("countryCode") or "??"
+        flag = country_code_to_flag(code)
+    except Exception:
+        flag, code = "🌍", "??"
+    
+    COUNTRY_CACHE[ip] = (flag, code)
+    return flag, code
+```
+
+**Free alternatives:**
+- `ip-api.com` - 45 requests/min free
+- `ipapi.co` - 1000 requests/day free
+- `freegeoip.app` - Free tier available
+
 ## Running Locally
 
 If you want to use this tool for educational purposes, you can still run it locally:
 
 ```bash
-# Clone the repository
-git clone https://github.com/ak-47-brar/TeleProxyHub.git
+# Clone the repository (replace with your fork)
+git clone https://github.com/YOUR-USERNAME/TeleProxyHub.git
 cd TeleProxyHub
 
 # Install dependencies
@@ -76,6 +163,7 @@ If you want to deploy this elsewhere (at your own risk):
 - **Railway.app** - More lenient networking policies ($5 free credit)
 - **Render.com** - Free tier, check their terms first
 - **Self-hosted VPS** - DigitalOcean, Linode, Hetzner (full control)
+- **Replit** - May work for educational projects
 
 ### ⚠️ Important Notes
 - Always check platform Terms of Service before deploying
@@ -120,6 +208,16 @@ This tool was created for educational purposes to demonstrate network programmin
 ## License
 
 MIT License - See LICENSE file for details
+
+---
+
+## Contributing
+
+While the original project is discontinued, you're welcome to:
+- Fork this repository and create your own version
+- Submit issues for bugs or improvements
+- Share alternative deployment methods
+- Suggest better proxy sources or APIs
 
 ---
 

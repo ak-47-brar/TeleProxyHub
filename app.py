@@ -4,7 +4,13 @@ import socket
 import time
 import concurrent.futures
 
+# =========================
+# CONFIGURATION SECTION
+# =========================
+# Customize these settings according to your needs
+
 # Multiple proxy sources for redundancy
+# Replace these with your own proxy sources
 PROXY_SOURCES = [
     "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt",
     "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt",
@@ -12,9 +18,19 @@ PROXY_SOURCES = [
     "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000&country=all&ssl=all&anonymity=all",
 ]
 
-MAX_TEST_PROXIES = 80
-CONNECT_TIMEOUT = 4
-MAX_WORKERS = 40
+# Performance settings - adjust based on your system
+MAX_TEST_PROXIES = 80    # Maximum number of proxies to test at once
+CONNECT_TIMEOUT = 4      # Connection timeout in seconds
+MAX_WORKERS = 40         # Number of parallel worker threads
+
+# Geolocation API endpoint (change if needed)
+# Current: ipwho.is (free, no API key required)
+# Alternatives: ip-api.com, ipapi.co, freegeoip.app
+GEOLOCATION_API = "https://ipwho.is/{ip}"
+
+# =========================
+# END CONFIGURATION
+# =========================
 
 COUNTRY_CACHE = {}
 
@@ -105,14 +121,16 @@ def country_code_to_flag(code: str):
 
 
 def get_country(ip: str):
-    """Get (flag, country_code) for an IP using ipwho.is with caching."""
+    """Get (flag, country_code) for an IP using geolocation API with caching."""
     if ip in COUNTRY_CACHE:
         return COUNTRY_CACHE[ip]
 
     try:
-        url = f"https://ipwho.is/{ip}"
+        url = GEOLOCATION_API.format(ip=ip)
         resp = requests.get(url, timeout=3)
         data = resp.json()
+        
+        # Parse response (adjust based on your API)
         if data.get("success"):
             code = data.get("country_code") or "??"
             flag = country_code_to_flag(code)
@@ -137,7 +155,7 @@ def build_results_html(working_list):
         <div class="error">
             🔴 No working proxies found right now.<br><br>
             💡 <b>Possible reasons:</b><br>
-            • Hugging Face may block outbound connections to proxy ports<br>
+            • Hosting platform may block outbound connections to proxy ports<br>
             • Free public proxies are often unstable (5-15% success rate)<br>
             • Try running this app locally: <code>python app.py</code><br><br>
             🔄 Try again in a few minutes or refresh the page.
@@ -476,7 +494,7 @@ with gr.Blocks(css=custom_css, title="TeleProxyHub - SOCKS5 Proxy Manager") as d
     <div style='text-align: center; color: rgba(255,255,255,0.75); margin-top: 24px; font-size: 13px; line-height: 1.7;'>
     💡 <b>How it works:</b> Tests TCP connection to each proxy port<br>
     🌍 <b>Country Detection:</b> Via IP lookup API with caching<br>
-    ⚠️ <b>Note:</b> If no proxies work, try running locally: <code>git clone [repo] && python app.py</code>
+    ⚠️ <b>Note:</b> If no proxies work, try running locally: <code>python app.py</code>
     </div>
     """)
 
